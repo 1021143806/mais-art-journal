@@ -141,7 +141,7 @@ async def generate_scene_with_llm(activity_info: ActivityInfo) -> Optional[Dict[
             model_config=model,
             request_type="plugin.auto_selfie_scene",
             temperature=0.7,
-            max_tokens=300,
+            max_tokens=8192,
         )
 
         if not success or not response:

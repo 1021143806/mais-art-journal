@@ -94,7 +94,7 @@ async def generate_caption(
             model_config=model,
             request_type="plugin.auto_selfie_caption",
             temperature=0.85,
-            max_tokens=200,
+            max_tokens=8192,
         )
 
         if success and caption:
