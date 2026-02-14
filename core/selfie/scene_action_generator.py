@@ -4,7 +4,8 @@
 根据 ActivityInfo 生成符合情境的动作和 Stable Diffusion 提示词。
 
 自动自拍：优先使用 LLM 根据活动描述生成英文 SD 场景标签，失败时取消。
-手动自拍：使用确定性映射（get_action_for_activity）。
+手动自拍：优先使用 LLM 生成手部动作（generate_hand_action_with_llm），
+         失败时回退到风格专属动作池随机选取。
 """
 
 import json
@@ -14,7 +15,7 @@ from typing import Dict, List, Optional
 from src.common.logger import get_logger
 
 from .schedule_provider import ActivityInfo
-from ..utils import ANTI_DUAL_HANDS_PROMPT
+from ..utils import SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT
 
 logger = get_logger("auto_selfie.scene")
 
@@ -88,7 +89,7 @@ ACTIVITY_LIGHTING: Dict[str, str] = {
 
 # ==================== LLM 场景生成（自动自拍专用） ====================
 
-_SCENE_LLM_PROMPT = """You are a selfie scene tag generator for anime image generation (Stable Diffusion).
+_SCENE_LLM_PROMPT_BASE = """You are a selfie scene tag generator for anime image generation (Stable Diffusion).
 Given a character's current activity description, output a JSON object with 4 keys:
 - action: physical pose/gesture/hand position (3-8 English tags)
 - environment: background and surroundings (3-8 English tags)
@@ -99,9 +100,23 @@ Rules:
 1. Output ONLY valid JSON, no markdown, no explanations
 2. All values must be English tags suitable for Stable Diffusion
 3. Do NOT include character appearance (hair, eyes, clothing)
-4. Tags should feel natural for a selfie scenario
+4. Tags should feel natural for the scenario
 5. Keep tags concise and descriptive
+6. IMPORTANT for action: prefer simple, AI-friendly gestures. AVOID complex multi-finger details (e.g. heart shape with hands, interlocked fingers) as they cause generation artifacts"""
 
+# 按风格补充的约束
+_SCENE_STYLE_HINTS = {
+    "standard": """
+7. STYLE CONSTRAINT - Standard selfie: one hand is holding the phone (OFF-SCREEN). Only the OTHER hand is free. Action MUST be a single-hand gesture (e.g. peace sign, touching hair, hand on chin, waving). NEVER use two-hand actions.""",
+
+    "mirror": """
+7. STYLE CONSTRAINT - Mirror selfie: one hand holds the phone (VISIBLE in mirror). Only the OTHER hand is free. Action should be single-hand poses suitable for mirror reflection (e.g. hand on hip, adjusting hair, fixing collar, hand in pocket).""",
+
+    "photo": """
+7. STYLE CONSTRAINT - Third-person photo: both hands are FREE (someone else is taking the photo). Action can use both hands naturally (e.g. hands behind back, walking casually, holding a cup, leaning on railing, sitting). Prefer natural full-body poses.""",
+}
+
+_SCENE_LLM_EXAMPLES = """
 Examples:
 
 Activity: 在书房看轻小说
@@ -116,11 +131,18 @@ Activity: 在公园散步
 Now generate for the following activity:"""
 
 
-async def generate_scene_with_llm(activity_info: ActivityInfo) -> Optional[Dict[str, str]]:
+def _build_scene_llm_prompt(selfie_style: str) -> str:
+    """组装带风格约束的 LLM 场景生成 prompt"""
+    style_hint = _SCENE_STYLE_HINTS.get(selfie_style, _SCENE_STYLE_HINTS["standard"])
+    return f"{_SCENE_LLM_PROMPT_BASE}{style_hint}{_SCENE_LLM_EXAMPLES}"
+
+
+async def generate_scene_with_llm(activity_info: ActivityInfo, selfie_style: str = "standard") -> Optional[Dict[str, str]]:
     """使用 LLM 根据活动描述生成英文 SD 场景标签
 
     Args:
         activity_info: 活动信息
+        selfie_style: 自拍风格，用于约束 LLM 生成的动作类型
 
     Returns:
         包含 action, environment, expression, lighting 的字典，失败返回 None
@@ -134,7 +156,8 @@ async def generate_scene_with_llm(activity_info: ActivityInfo) -> Optional[Dict[
             logger.warning("未找到 replyer 模型，LLM 场景生成失败")
             return None
 
-        prompt = f"{_SCENE_LLM_PROMPT}\n\nActivity: {activity_info.description}"
+        system_prompt = _build_scene_llm_prompt(selfie_style)
+        prompt = f"{system_prompt}\n\nActivity: {activity_info.description}"
 
         success, response, _, model_name = await llm_api.generate_with_model(
             prompt=prompt,
@@ -185,6 +208,69 @@ async def generate_scene_with_llm(activity_info: ActivityInfo) -> Optional[Dict[
         return None
 
 
+async def generate_hand_action_with_llm(description: str, selfie_style: str = "standard") -> Optional[str]:
+    """使用与自动自拍同一套 LLM prompt 生成手部动作
+
+    复用 _build_scene_llm_prompt（风格感知），将用户描述作为 Activity 输入，
+    解析完整 JSON 后只提取 action 字段返回。
+
+    用于手动自拍无日程数据时，动作池兜底之前。
+
+    Args:
+        description: 用户的场景描述
+        selfie_style: 自拍风格，约束动作类型
+
+    Returns:
+        英文手部动作标签字符串，失败返回 None
+    """
+    try:
+        from src.plugin_system.apis import llm_api
+
+        models = llm_api.get_available_models()
+        model = models.get("replyer")
+        if not model:
+            logger.warning("未找到 replyer 模型，手部动作生成失败")
+            return None
+
+        system_prompt = _build_scene_llm_prompt(selfie_style)
+        prompt = f"{system_prompt}\n\nActivity: {description}"
+
+        success, response, _, model_name = await llm_api.generate_with_model(
+            prompt=prompt,
+            model_config=model,
+            request_type="plugin.selfie_hand_action",
+            temperature=0.7,
+            max_tokens=8192,
+        )
+
+        if not success or not response:
+            logger.warning("手部动作 LLM 返回空响应")
+            return None
+
+        # 清理响应
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        scene = json.loads(cleaned)
+
+        action = scene.get("action")
+        if not isinstance(action, str) or not action.strip():
+            logger.warning(f"手部动作字段无效: {action}")
+            return None
+
+        logger.info(f"LLM 手部动作生成成功 (模型: {model_name}): {action[:60]}")
+        return action.strip()
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"手部动作 JSON 解析失败: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"手部动作 LLM 生成异常: {e}")
+        return None
+
+
 # ==================== 公共函数 ====================
 
 def get_action_for_activity(activity_info: ActivityInfo) -> Dict[str, str]:
@@ -219,22 +305,22 @@ async def convert_to_selfie_prompt(
 
     Args:
         activity_info: 活动信息
-        selfie_style: 自拍风格 ("standard" 或 "mirror")
+        selfie_style: 自拍风格 ("standard"、"mirror" 或 "photo")
         bot_appearance: Bot 外观描述（从配置读取的 selfie.prompt_prefix）
 
     Returns:
         完整的 SD 提示词，LLM 失败时返回 None
     """
-    # 使用 LLM 生成场景
-    scene = await generate_scene_with_llm(activity_info)
+    # 使用 LLM 生成场景（传入风格以约束动作类型）
+    scene = await generate_scene_with_llm(activity_info, selfie_style)
     if not scene:
         logger.warning("LLM 场景生成失败，取消本次自拍提示词生成")
         return None
 
     prompt_parts: List[str] = []
 
-    # 1. 强制主体
-    prompt_parts.append("(1girl:1.4), (solo:1.3)")
+    # 1. 强制主体（含手部质量引导）
+    prompt_parts.append("(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)")
 
     # 2. Bot 外观
     if bot_appearance:
@@ -258,6 +344,9 @@ async def convert_to_selfie_prompt(
                 "(only one hand visible in frame:1.5), "
                 "(single hand gesture:1.3)"
             )
+        elif selfie_style == "photo":
+            # 第三人称照片：自然动作，不需要手部强调
+            hand_prompt = f"({hand_action}:1.2)"
         else:
             hand_prompt = f"({hand_action}:1.3)"
         prompt_parts.append(hand_prompt)
@@ -274,6 +363,13 @@ async def convert_to_selfie_prompt(
             "mirror selfie, reflection in mirror, "
             "holding phone in hand, phone visible, "
             "looking at mirror, indoor scene"
+        )
+    elif selfie_style == "photo":
+        selfie_scene = (
+            "photo, candid shot, natural pose, "
+            "full body or upper body, "
+            "looking away or at camera, "
+            "(natural composition:1.2)"
         )
     else:
         selfie_scene = (
@@ -312,10 +408,15 @@ def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") ->
     Returns:
         完整的负面提示词
     """
-    if selfie_style == "standard":
-        anti_dual_hands = ANTI_DUAL_HANDS_PROMPT
-        if base_negative:
-            return f"{base_negative}, {anti_dual_hands}"
-        return anti_dual_hands
+    parts = []
+    if base_negative:
+        parts.append(base_negative)
 
-    return base_negative
+    # 所有风格都加手部质量负面提示词
+    parts.append(SELFIE_HAND_NEGATIVE)
+
+    # standard 额外加防双手拿手机
+    if selfie_style == "standard":
+        parts.append(ANTI_DUAL_PHONE_PROMPT)
+
+    return ", ".join(parts)

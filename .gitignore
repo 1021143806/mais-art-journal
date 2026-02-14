@@ -2,7 +2,7 @@
 *.log
 
 # 忽略特定目录
-old/*
+old/
 __pycache__/
 .claude
 test/*

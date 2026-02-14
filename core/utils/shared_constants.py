@@ -4,12 +4,24 @@
 # JPEG: /9j/  PNG: iVBORw  WEBP: UklGR  GIF: R0lGOD
 BASE64_IMAGE_PREFIXES = ("iVBORw", "/9j/", "UklGR", "R0lGOD")
 
-# 防止生成双手拿手机等不自然姿态的负面提示词
-ANTI_DUAL_HANDS_PROMPT = (
+# 自拍通用手部质量负面提示词（所有自拍风格共用）
+SELFIE_HAND_NEGATIVE = (
+    "extra fingers, missing fingers, fused fingers, too many fingers, "
+    "mutated hands, malformed hands, bad hands, wrong hands, "
+    "extra hands, extra arms, 3 hands, 4 hands, multiple hands, "
+    "deformed fingers, interlocked fingers, twisted fingers, "
+    "six fingers, more than 5 fingers, fewer than 5 fingers, "
+    "extra digit, missing digit, bad anatomy"
+)
+
+# 标准自拍专用：防止生成双手拿手机等不自然姿态
+ANTI_DUAL_PHONE_PROMPT = (
     "two phones, camera in both hands, "
     "holding phone with both hands, "
-    "extra hands, extra arms, 3 hands, 4 hands, "
-    "multiple hands, both hands holding phone, "
+    "both hands holding phone, "
     "phone in frame, visible phone in hand, "
     "both hands visible"
 )
+
+# 向后兼容别名
+ANTI_DUAL_HANDS_PROMPT = f"{SELFIE_HAND_NEGATIVE}, {ANTI_DUAL_PHONE_PROMPT}"

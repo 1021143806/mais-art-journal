@@ -82,7 +82,7 @@ class OpenAIChatClient(BaseApiClient):
 
         # 添加可选的生成参数
         seed = model_config.get("seed", -1)
-        if seed and seed != -1:
+        if seed is not None and seed != -1:
             payload_dict["seed"] = seed
 
         # 某些模型支持 size 参数

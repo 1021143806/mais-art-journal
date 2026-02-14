@@ -52,7 +52,7 @@ class OpenAIClient(BaseApiClient):
         # 添加可选参数
         if negative_prompt:
             payload_dict["negative_prompt"] = negative_prompt
-        if seed and seed != -1:
+        if seed is not None and seed != -1:
             payload_dict["seed"] = seed
 
         # 如果有输入图片，添加图生图参数

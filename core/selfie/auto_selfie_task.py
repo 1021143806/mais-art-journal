@@ -127,7 +127,7 @@ class AutoSelfieTask:
         logger.info(f"当前活动: {activity.description} ({activity.activity_type.value})")
 
         # 2. 生成自拍提示词
-        selfie_style = self.get_config("auto_selfie.selfie_style", "standard")
+        selfie_style = self.get_config("selfie.default_style", "standard")
         bot_appearance = self.get_config("selfie.prompt_prefix", "")
         prompt = await convert_to_selfie_prompt(activity, selfie_style, bot_appearance)
         if not prompt:

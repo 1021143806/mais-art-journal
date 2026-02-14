@@ -363,7 +363,7 @@ class MaisArtJournalPlugin(BasePlugin):
             "negative_prompt": ConfigField(
                 type=str,
                 default="",
-                description="自拍模式基础负面提示词。自动附加 anti-dual-hands 提示词（防止双手拿手机等不自然姿态）。此处可添加额外的负面提示词",
+                description="自拍模式基础负面提示词。所有风格自动附加手部质量负面提示词，standard 风格额外附加防双手拿手机提示词。此处可添加额外的负面提示词",
                 label="负面提示词",
                 input_type="textarea",
                 rows=3,
@@ -380,6 +380,16 @@ class MaisArtJournalPlugin(BasePlugin):
                 depends_on="selfie.enabled",
                 depends_value=True,
                 order=5
+            ),
+            "default_style": ConfigField(
+                type=str,
+                default="standard",
+                description="自拍默认风格（手动和自动自拍共用）：standard(前置自拍)/mirror(对镜自拍)/photo(第三人称照片)。可通过 /dr selfie standard|mirror|photo 按聊天流覆盖",
+                label="默认自拍风格",
+                choices=["standard", "mirror", "photo"],
+                depends_on="selfie.enabled",
+                depends_value=True,
+                order=6
             )
         },
         "auto_recall": {
@@ -429,16 +439,6 @@ class MaisArtJournalPlugin(BasePlugin):
                 depends_value=True,
                 order=3
             ),
-            "selfie_style": ConfigField(
-                type=str,
-                default="standard",
-                description="自拍风格：standard(前置自拍)/mirror(对镜自拍)",
-                label="自拍风格",
-                choices=["standard", "mirror"],
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=4
-            ),
             "quiet_hours_start": ConfigField(
                 type=str,
                 default="00:00",
@@ -448,7 +448,7 @@ class MaisArtJournalPlugin(BasePlugin):
                 placeholder="00:00",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
-                order=5
+                order=4
             ),
             "quiet_hours_end": ConfigField(
                 type=str,
@@ -458,7 +458,7 @@ class MaisArtJournalPlugin(BasePlugin):
                 placeholder="07:00",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
-                order=6
+                order=5
             ),
             "caption_enabled": ConfigField(
                 type=bool,
@@ -467,7 +467,7 @@ class MaisArtJournalPlugin(BasePlugin):
                 label="生成配文",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
-                order=7
+                order=6
             ),
         },
         "models": {},

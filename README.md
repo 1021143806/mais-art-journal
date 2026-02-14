@@ -7,7 +7,7 @@
 ### 🎯 智能图片生成
 - **文生图**: 根据对话内容自动生成图片
 - **图生图**: 检测到消息中有图片时自动使用图生图模式
-- **自拍模式**: 根据手部动作库生成自拍提示词，支持日程活动增强场景（需 autonomous_planning 插件），可配置参考图进行图生图
+- **自拍模式**: 支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格。优先使用 LLM 生成风格感知的手部动作，失败时回退到风格专属动作池。支持日程活动增强场景（需 autonomous_planning 插件），可配置参考图进行图生图
 - **提示词优化**: 自动将中文描述优化为专业英文 SD 提示词（自拍模式仅优化场景，不干扰角色外观）
 - **结果缓存**: 相同参数复用之前的结果
 - **自动撤回**: 可按模型配置延时撤回
@@ -42,6 +42,7 @@
 | `/dr recall on\|off <模型ID>` | 开关指定模型的撤回 |
 | `/dr on` / `/dr off` | 开关插件（当前聊天流） |
 | `/dr selfie on\|off` | 开关自拍日程增强（当前聊天流） |
+| `/dr selfie standard\|mirror\|photo` | 切换自拍风格（当前聊天流） |
 | `/dr reset` | 重置当前聊天流的所有运行时配置 |
 
 > 运行时配置（模型切换、开关等）仅保存在内存中，重启后恢复为 config.toml 的全局设置。
@@ -52,16 +53,15 @@
 
 **依赖**:
 - `autonomous_planning` 插件 — 提供日程数据（当前活动）
-- `Maizone` 插件 — 发布到 QQ 空间
+- `Maizone` 插件（https://github.com/Rabbit-Jia-Er/Maizone） — 发布到 QQ 空间
 
 **特性**:
 - 可配置间隔（默认 2 小时）
 - 安静时段控制（默认 00:00-07:00 不发）
-- LLM 根据日程活动描述生成英文 SD 场景标签（动作/环境/表情/光线），LLM 失败则跳过本次自拍
+- LLM 根据日程活动描述生成风格感知的英文 SD 场景标签（动作/环境/表情/光线），自动适配 standard/mirror/photo 的物理约束，LLM 失败则跳过本次自拍
 - 支持参考图片进行图生图自拍（可配置 `selfie.reference_image_path`，模型不支持时自动回退文生图）
 - 配文基于日程活动 + MaiBot 人设 + 表达风格自然生成，生成失败则跳过不发
-- 连续失败指数退避，避免频繁请求
-- 无日程数据时自动跳过，不会发空内容
+- 连续失败指数退避，避免频繁请求，无日程数据时自动跳过，不会发空内容
 
 ---
 
@@ -69,13 +69,13 @@
 
 | format | 平台 | 说明 |
 |--------|------|------|
-| `openai` | OpenAI / 硅基流动 / Grok / NewAPI 等 | 通用 `/images/generations` 接口，自动适配硅基流动参数差异 |
+| `openai` | OpenAI / 硅基流动 / Grok / NewAPI 等 | 通用 `/images/generations` 接口 |
 | `openai-chat` | 支持生图的 Chat 模型 | 通过 `/chat/completions` 生图，多策略提取图片 |
 | `doubao` | 豆包（火山引擎） | 使用 Ark SDK，支持 seed/guidance_scale/watermark |
 | `gemini` | Google Gemini | 原生 `generateContent` 接口，支持 Gemini 2.5/3 系列 |
 | `modelscope` | 魔搭社区 | 异步任务模式，自动轮询结果 |
 | `shatangyun` | 砂糖云 (NovelAI) | GET 请求，URL 参数传递 |
-| `mengyuai` | 梦羽 AI | 支持多模型切换，不支持图生图（须设 `support_img2img = false`） |
+| `mengyuai` | 梦羽 AI | 不支持图生图（须设 `support_img2img = false`） |
 | `zai` | Zai (Gemini 转发) | OpenAI 兼容的 chat/completions，支持宽高比/分辨率 |
 | `comfyui` | 本地 ComfyUI | 加载工作流 JSON，替换占位符，轮询结果（支持代理配置） |
 
@@ -235,8 +235,9 @@ support_img2img = false              # 需工作流中包含 ${image} 占位符
 enabled = true
 reference_image_path = ""         # 参考图路径（留空=纯文生图，配置后自动图生图）
 prompt_prefix = "blue hair, red eyes, 1girl"  # Bot 外观描述
-negative_prompt = ""              # 额外负面提示词（自动附加 anti-dual-hands）
+negative_prompt = ""              # 额外负面提示词（自动附加手部质量负面提示词）
 schedule_enabled = true           # 日程增强（结合 autonomous_planning 日程数据），可通过 /dr selfie on|off 按聊天流覆盖
+default_style = "standard"        # 默认自拍风格: standard(前置自拍) / mirror(对镜自拍) / photo(第三人称照片)，可通过 /dr selfie standard|mirror|photo 按聊天流覆盖
 
 [auto_recall]
 enabled = false                   # 总开关，需在模型配置中设置 auto_recall_delay > 0
@@ -252,11 +253,12 @@ enabled = true                    # 使用 MaiBot LLM 优化提示词
 enabled = false
 interval_minutes = 120            # 自拍间隔（分钟）
 selfie_model = "model1"           # 使用的模型 ID
-selfie_style = "standard"         # standard=前置自拍 / mirror=对镜自拍
 quiet_hours_start = "00:00"       # 安静时段（此时段内不发自拍）
 quiet_hours_end = "07:00"
 caption_enabled = true            # 是否生成配文
 ```
+
+> 自动自拍的风格由 `[selfie].default_style` 统一控制。
 
 ### 风格配置
 
@@ -331,8 +333,9 @@ watercolor = "水彩"
 
 ## 贡献和反馈
 
-- 制作者水平有限，任何漏洞、疑问或建议,欢迎提交 Issue 和 Pull Request！
-- 或联系QQ：1021143806,3082618311。
+- **制作者水平有限，任何漏洞、疑问或建议,欢迎提交 Issue 和 Pull Request！**
+- **或联系QQ：1021143806,3082618311**
+- **其余问题请联系作者修复或解决（部分好友请求可能被过滤导致回复不及时，请见谅）**
 
 ---
 

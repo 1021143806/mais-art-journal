@@ -35,6 +35,8 @@ class ChatStreamState:
     command_default_model: Optional[str] = None
     # 自拍日程增强是否启用（None表示使用全局配置）
     selfie_schedule_enabled: Optional[bool] = None
+    # 手动自拍默认风格（None表示使用全局配置）
+    selfie_style: Optional[str] = None
     # 最后访问时间戳
     last_access: float = field(default_factory=time.time)
 
@@ -88,6 +90,7 @@ class RuntimeStateManager:
             or state.action_default_model is not None
             or state.command_default_model is not None
             or state.selfie_schedule_enabled is not None
+            or state.selfie_style is not None
         )
 
     # ==================== 插件开关 ====================
@@ -243,6 +246,37 @@ class RuntimeStateManager:
         state.selfie_schedule_enabled = None
         logger.info(f"[RuntimeState] 聊天流 {chat_id} 自拍日程增强已重置为全局配置")
 
+    # ==================== 自拍风格 ====================
+
+    _VALID_SELFIE_STYLES = {"standard", "mirror", "photo"}
+
+    def get_selfie_style(self, chat_id: str, global_default: Optional[str] = None) -> Optional[str]:
+        """获取手动自拍默认风格
+
+        Args:
+            chat_id: 聊天流ID
+            global_default: 全局配置的默认风格，传 None 时可用于判断是否有运行时覆盖
+
+        Returns:
+            自拍风格（优先使用聊天流状态，否则返回 global_default）
+        """
+        state = self._get_state(chat_id)
+        if state.selfie_style is not None:
+            return state.selfie_style
+        return global_default
+
+    def set_selfie_style(self, chat_id: str, style: str) -> None:
+        """设置手动自拍默认风格"""
+        state = self._get_state(chat_id)
+        state.selfie_style = style
+        logger.info(f"[RuntimeState] 聊天流 {chat_id} 自拍风格设置为: {style}")
+
+    def reset_selfie_style(self, chat_id: str) -> None:
+        """重置手动自拍风格为全局配置"""
+        state = self._get_state(chat_id)
+        state.selfie_style = None
+        logger.info(f"[RuntimeState] 聊天流 {chat_id} 自拍风格已重置为全局配置")
+
     # ==================== 状态重置 ====================
 
     def reset_chat_state(self, chat_id: str) -> None:
@@ -261,6 +295,7 @@ class RuntimeStateManager:
             "action_default_model": state.action_default_model,
             "command_default_model": state.command_default_model,
             "selfie_schedule_enabled": state.selfie_schedule_enabled,
+            "selfie_style": state.selfie_style,
         }
 
 

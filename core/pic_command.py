@@ -641,6 +641,8 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
 
             global_selfie_schedule = self.get_config("selfie.schedule_enabled", True)
             selfie_schedule = runtime_state.is_selfie_schedule_enabled(chat_id, global_selfie_schedule)
+            global_selfie_style = self.get_config("selfie.default_style", "standard")
+            selfie_style = runtime_state.get_selfie_style(chat_id, global_selfie_style)
 
             # 获取模型详细信息
             action_config = self.get_config(f"models.{action_model}", {})
@@ -655,6 +657,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 f"🔧 /dr命令模型: {command_model}",
                 f"   • 名称: {command_config.get('name', command_config.get('model', '未知')) if isinstance(command_config, dict) else '未知'}",
                 f"\n📸 自拍日程增强: {'✅ 启用' if selfie_schedule else '❌ 禁用'}",
+                f"📷 自拍风格: {selfie_style}",
             ]
 
             if disabled_models:
@@ -790,24 +793,33 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             return False, f"设置默认模型失败: {str(e)}", True
 
     async def _toggle_selfie_schedule(self, params: str, chat_id: str) -> Tuple[bool, Optional[str], bool]:
-        """开关自拍日程增强"""
+        """自拍设置：日程开关 + 风格切换"""
         try:
             action = params.strip().lower() if params else ""
-            if action not in ["on", "off"]:
-                await self.send_text("格式：/dr selfie on|off")
-                return False, "参数无效", True
 
-            enabled = action == "on"
-            runtime_state.set_selfie_schedule_enabled(chat_id, enabled)
+            # /dr selfie on|off → 日程增强开关
+            if action in ["on", "off"]:
+                enabled = action == "on"
+                runtime_state.set_selfie_schedule_enabled(chat_id, enabled)
+                status = "启用" if enabled else "禁用"
+                await self.send_text(f"自拍日程增强已{status}")
+                return True, f"自拍日程增强{status}成功", True
 
-            status = "启用" if enabled else "禁用"
-            await self.send_text(f"自拍日程增强已{status}")
-            return True, f"自拍日程增强{status}成功", True
+            # /dr selfie standard|mirror|photo → 切换自拍风格
+            valid_styles = {"standard", "mirror", "photo"}
+            if action in valid_styles:
+                runtime_state.set_selfie_style(chat_id, action)
+                style_names = {"standard": "标准自拍", "mirror": "对镜自拍", "photo": "第三人称照片"}
+                await self.send_text(f"自拍风格已切换为: {style_names[action]}（{action}）")
+                return True, f"自拍风格切换为{action}", True
+
+            await self.send_text("格式：/dr selfie on|off（日程增强）或 /dr selfie standard|mirror|photo（自拍风格）")
+            return False, "参数无效", True
 
         except Exception as e:
-            logger.error(f"{self.log_prefix} 切换自拍日程状态失败: {e!r}")
+            logger.error(f"{self.log_prefix} 自拍设置失败: {e!r}")
             await self.send_text(f"操作失败：{str(e)[:100]}")
-            return False, f"切换自拍日程状态失败: {str(e)}", True
+            return False, f"自拍设置失败: {str(e)}", True
 
 
 class PicStyleCommand(PicCommandMixin, BaseCommand):
@@ -954,6 +966,7 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
                     "• /dr model on|off <模型ID> - 开关模型",
                     "• /dr recall on|off <模型ID> - 开关撤回",
                     "• /dr selfie on|off - 开关自拍日程增强",
+                    "• /dr selfie standard|mirror|photo - 切换自拍风格",
                     "• /dr default <模型ID> - 设置默认模型",
                     "• /dr set <模型ID> - 设置/dr命令模型",
                     "• /dr style <风格名> - 查看风格详情",
